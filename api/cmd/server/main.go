@@ -12,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/mymindmap/api/internal/auth"
 	"github.com/mymindmap/api/internal/http/routes"
 )
@@ -94,7 +95,10 @@ func main() {
 	// Оборачиваем основной роутер в chi.Router для добавления ручных маршрутов
 	r := chi.NewRouter()
 
-
+r.Use(middleware.RequestID) // Добавляет request_id в каждый запрос, для трейсинга
+r.Use(middleware.Logger) // Логирование всех запросов
+r.Use(middleware.Recoverer)  // Если где-то внутри сервера (обработчика запроса) произойдет паника, приложение не должно упасть
+r.Use(middleware.URLFormat) // Парсер URLов поступающих запросов
 	r.Mount("/api", mainRouter) // подключаем все CRUD маршруты
 
 
