@@ -8,5 +8,6 @@ api/server
 api/tmp
 /.idea
 .idea
+.vscode/
 # dist/
 npm-debug.log
