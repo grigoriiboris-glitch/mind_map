@@ -19,14 +19,23 @@ c:
 	docker-compose up caddy
 
 test:
-	docker exec -it mindmap-api go test ./...
+	docker exec -it $(API) go test ./...
+t:
+	docker exec -it $(API) go test ./repo/...
+
+mig:
+	docker exec -it $(API) migrate -source file://repository/migrations -database postgres://postgres:password@postgres:5432/test?sslmode=disable up
 
 td:
-	docker exec -it -w /app/$(DIR) mindmap-api go test -cover
+	docker exec -it -w /app/$(DIR) $(API) go test -cover
 
-cr:
-	docker exec -it  mindmap-api go run scripts/main.go
+crud:
+	docker exec -it  $(API) go run scripts/gen/main.go
+repo:
+	docker exec -it $(API) go run scripts/gen/makeRepository.go -model=$(MODEL) -table=$(shell echo $(MODEL) | tr 'A-Z' 'a-z')s
 ##	docker exec -it -w /app/auth mindmap-api go test -cover
 
 # Значение по умолчанию
 DIR ?= auth
+MODEL ?= User
+API ?= mindmap-api

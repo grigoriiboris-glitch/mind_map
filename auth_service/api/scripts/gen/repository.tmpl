@@ -1,0 +1,67 @@
+package repository
+
+import (
+    "context"
+    "github.com/jackc/pgx/v5/pgxpool"
+    "{{.PackagePath}}"
+)
+
+type {{.StructName}}Repo struct {
+    db *pgxpool.Pool
+}
+
+func New{{.StructName}}Repo(db *pgxpool.Pool) *{{.StructName}}Repo {
+    return &{{.StructName}}Repo{db: db}
+}
+
+func (r *{{.StructName}}Repo) Create(ctx context.Context, entity *models.{{.StructName}}) error {
+    query := `INSERT INTO {{.TableName}} ({{.InsertColumns}})
+              VALUES ({{.InsertPlaceholders}})
+              RETURNING {{.PrimaryKey}}`
+    return r.db.QueryRow(ctx, query, {{.InsertFields}}).
+        Scan(&entity.{{.PrimaryKeyField}})
+}
+
+func (r *{{.StructName}}Repo) Find(ctx context.Context, id any) (*models.{{.StructName}}, error) {
+    query := `SELECT {{.SelectColumns}} FROM {{.TableName}} WHERE {{.PrimaryKey}} = $1`
+    row := r.db.QueryRow(ctx, query, id)
+
+    entity := &models.{{.StructName}}{}
+    err := row.Scan({{.ScanFields}})
+    if err != nil {
+        return nil, err
+    }
+    return entity, nil
+}
+
+func (r *{{.StructName}}Repo) Update(ctx context.Context, entity *models.{{.StructName}}) error {
+    query := `UPDATE {{.TableName}} SET {{.UpdateAssignments}} WHERE {{.PrimaryKey}} = ${{.UpdateLastIndex}}`
+    _, err := r.db.Exec(ctx, query, {{.UpdateFields}})
+    return err
+}
+
+func (r *{{.StructName}}Repo) Delete(ctx context.Context, id any) error {
+    query := `DELETE FROM {{.TableName}} WHERE {{.PrimaryKey}} = $1`
+    _, err := r.db.Exec(ctx, query, id)
+    return err
+}
+
+func (r *{{.StructName}}Repo) List(ctx context.Context, limit, offset int) ([]models.{{.StructName}}, error) {
+    query := `SELECT {{.SelectColumns}} FROM {{.TableName}} ORDER BY {{.PrimaryKey}} LIMIT $1 OFFSET $2`
+    rows, err := r.db.Query(ctx, query, limit, offset)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var result []models.{{.StructName}}
+    for rows.Next() {
+        entity := models.{{.StructName}}{}
+        err := rows.Scan({{.ScanFields}})
+        if err != nil {
+            return nil, err
+        }
+        result = append(result, entity)
+    }
+    return result, nil
+}

@@ -1,0 +1,538 @@
+package repository
+
+import (
+	"context"
+	"testing"
+	//"time"
+
+	"{{ .Module }}/models"
+	"{{ .Module }}/pkg/testutils"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func setupTestDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	
+	// Здесь должна быть логика подключения к тестовой БД
+	// Например, использование testcontainers или временной БД
+	pool, err := pgxpool.New(context.Background(), "postgresql://postgres:password@postgres:5432/test")
+	require.NoError(t, err, "Failed to connect to test database")
+
+	t.Cleanup(func() {
+		pool.Close()
+	})
+
+	// Очистка таблицы перед тестом
+	_, err = pool.Exec(context.Background(), "TRUNCATE TABLE {{ .Name | lower }}s RESTART IDENTITY CASCADE")
+	require.NoError(t, err, "Failed to truncate table")
+
+	return pool
+}
+
+func Test{{ .Name }}Repository_Create(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := New{{ .Name }}Repository(pool)
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		entity      *models.{{ .Name }}
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "successful creation",
+			entity:  testutils.CreateTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }}),
+			wantErr: false,
+		},
+		{
+			name: "creation with required fields only",
+			entity: &models.{{ .Name }}{
+				// Заполнить обязательные поля - используйте правильные имена полей из вашей модели
+				Title:  "Required Title",
+				UserId: 1, // Исправлено: UserId вместо UserID
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := repo.Create(ctx, tt.entity)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.NotZero(t, tt.entity.ID, "ID should be set after creation")
+				assert.False(t, tt.entity.CreatedAt.IsZero(), "CreatedAt should be set")
+				assert.False(t, tt.entity.UpdatedAt.IsZero(), "UpdatedAt should be set")
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repository_Get(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := New{{ .Name }}Repository(pool)
+
+	ctx := context.Background()
+
+	// Создаем тестовые данные
+	testEntity := testutils.CreateTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }})
+	err := repo.Create(ctx, testEntity)
+	require.NoError(t, err, "Setup: Create failed")
+
+	tests := []struct {
+		name        string
+		id          int
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "existing entity",
+			id:      testEntity.ID,
+			wantErr: false,
+		},
+		{
+			name:        "non-existing entity",
+			id:          999,
+			wantErr:     true,
+			errContains: "not found",
+		},
+		{
+			name:        "invalid ID",
+			id:          0,
+			wantErr:     true,
+			errContains: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity, err := repo.Get(ctx, tt.id)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				assert.Nil(t, entity)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, entity)
+				assert.Equal(t, tt.id, entity.ID)
+				// Проверяем, что все поля корректно загружены
+				assert.Equal(t, testEntity.Title, entity.Title)
+				assert.Equal(t, testEntity.UserId, entity.UserId) // Исправлено: UserId вместо UserID
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repository_Update(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := New{{ .Name }}Repository(pool)
+
+	ctx := context.Background()
+
+	// Создаем оригинальную сущность
+	originalEntity := testutils.CreateTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }})
+	err := repo.Create(ctx, originalEntity)
+	require.NoError(t, err, "Setup: Create failed")
+
+	tests := []struct {
+		name        string
+		id          int
+		updates     interface{}
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "successful update with map",
+			id:   originalEntity.ID,
+			updates: map[string]interface{}{
+				"title":   "Updated Title",
+				"content": "Updated content",
+			},
+			wantErr: false,
+		},
+		{
+			name: "successful update with partial struct",
+			id:   originalEntity.ID,
+			updates: &models.{{ .Name }}{
+				Title: "Updated Title Struct",
+			},
+			wantErr: false,
+		},
+		{
+			name:        "update non-existing entity",
+			id:          999,
+			updates:     map[string]interface{}{"title": "Updated"},
+			wantErr:     true,
+			errContains: "no rows",
+		},
+		{
+			name:        "update with invalid field",
+			id:          originalEntity.ID,
+			updates:     map[string]interface{}{"invalid_field": "value"},
+			wantErr:     false, // Invalid fields игнорируются
+		},
+		{
+			name:        "update with empty data",
+			id:          originalEntity.ID,
+			updates:     map[string]interface{}{},
+			wantErr:     true,
+			errContains: "no fields to update",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := repo.Update(ctx, tt.id, tt.updates)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+
+				// Проверяем, что обновление применилось
+				updated, err := repo.Get(ctx, tt.id)
+				assert.NoError(t, err)
+
+				// Проверяем, что системные поля не изменились
+				assert.Equal(t, originalEntity.ID, updated.ID)
+				assert.Equal(t, originalEntity.CreatedAt.UTC(), updated.CreatedAt.UTC())
+
+				// Проверяем обновленные поля
+				switch u := tt.updates.(type) {
+				case map[string]interface{}:
+					for field, value := range u {
+						switch field {
+						case "title":
+							assert.Equal(t, value, updated.Title)
+						case "content":
+							assert.Equal(t, value, updated.Content)
+						}
+					}
+				case *models.{{ .Name }}:
+					if u.Title != "" {
+						assert.Equal(t, u.Title, updated.Title)
+					}
+				}
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repository_Delete(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := New{{ .Name }}Repository(pool)
+
+	ctx := context.Background()
+
+	// Создаем тестовые данные
+	testEntity := testutils.CreateTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }})
+	err := repo.Create(ctx, testEntity)
+	require.NoError(t, err, "Setup: Create failed")
+
+	tests := []struct {
+		name        string
+		id          int
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "delete existing entity",
+			id:      testEntity.ID,
+			wantErr: false,
+		},
+		{
+			name:        "delete non-existing entity",
+			id:          999,
+			wantErr:     false, // DELETE не возвращает ошибку для несуществующих записей
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := repo.Delete(ctx, tt.id)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+
+				// Проверяем, что entity действительно удален
+				_, err := repo.Get(ctx, tt.id)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "not found")
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repository_List(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := New{{ .Name }}Repository(pool)
+
+	ctx := context.Background()
+
+	// Создаем несколько тестовых entities
+	entities := make([]*models.{{ .Name }}, 5)
+	for i := 0; i < 5; i++ {
+		entity := testutils.CreateTestEntity(&models.{{ .Name }}{}, i+1).(*models.{{ .Name }})
+		err := repo.Create(ctx, entity)
+		require.NoError(t, err, "Setup: Create failed")
+		entities[i] = entity
+	}
+
+	tests := []struct {
+		name      string
+		limit     int
+		offset    int
+		wantCount int
+		wantErr   bool
+	}{
+		{
+			name:      "limit 2, offset 0",
+			limit:     2,
+			offset:    0,
+			wantCount: 2,
+			wantErr:   false,
+		},
+		{
+			name:      "limit 3, offset 1",
+			limit:     3,
+			offset:    1,
+			wantCount: 3,
+			wantErr:   false,
+		},
+		{
+			name:      "limit 10, offset 0 (more than exists)",
+			limit:     10,
+			offset:    0,
+			wantCount: 5,
+			wantErr:   false,
+		},
+		{
+			name:      "limit 2, offset 5 (out of range)",
+			limit:     2,
+			offset:    5,
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
+			name:      "negative limit",
+			limit:     -1,
+			offset:    0,
+			wantCount: 0,
+			wantErr:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := repo.List(ctx, tt.limit, tt.offset)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, items, tt.wantCount)
+
+				// Проверяем порядок (должен быть по created_at DESC)
+				for i := 1; i < len(items); i++ {
+					assert.True(t, items[i-1].CreatedAt.After(items[i].CreatedAt) || 
+						items[i-1].CreatedAt.Equal(items[i].CreatedAt))
+				}
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repository_Count(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := New{{ .Name }}Repository(pool)
+
+	ctx := context.Background()
+
+	// Начальный count должен быть 0
+	count, err := repo.Count(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, count)
+
+	// Создаем несколько entities
+	for i := 0; i < 3; i++ {
+		entity := testutils.CreateTestEntity(&models.{{ .Name }}{}, i+1).(*models.{{ .Name }})
+		err := repo.Create(ctx, entity)
+		require.NoError(t, err, "Setup: Create failed")
+	}
+
+	count, err = repo.Count(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, 3, count)
+}
+
+func Test{{ .Name }}Repository_FindByUserID(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := New{{ .Name }}Repository(pool)
+
+	ctx := context.Background()
+
+	// Создаем entities для разных пользователей
+	user1Entities := 3
+	user2Entities := 2
+
+	for i := 0; i < user1Entities; i++ {
+		entity := testutils.CreateTestEntity(&models.{{ .Name }}{}, i+1).(*models.{{ .Name }})
+		entity.UserId = 1 // Исправлено: UserId вместо UserID
+		err := repo.Create(ctx, entity)
+		require.NoError(t, err, "Setup: Create failed for user 1")
+	}
+
+	for i := 0; i < user2Entities; i++ {
+		entity := testutils.CreateTestEntity(&models.{{ .Name }}{}, i+user1Entities+1).(*models.{{ .Name }})
+		entity.UserId = 2 // Исправлено: UserId вместо UserID
+		err := repo.Create(ctx, entity)
+		require.NoError(t, err, "Setup: Create failed for user 2")
+	}
+
+	tests := []struct {
+		name      string
+		userID    int
+		limit     int
+		offset    int
+		wantCount int
+		wantErr   bool
+	}{
+		{
+			name:      "user 1 with limit 10",
+			userID:    1,
+			limit:     10,
+			offset:    0,
+			wantCount: user1Entities,
+			wantErr:   false,
+		},
+		{
+			name:      "user 2 with limit 10",
+			userID:    2,
+			limit:     10,
+			offset:    0,
+			wantCount: user2Entities,
+			wantErr:   false,
+		},
+		{
+			name:      "non-existing user",
+			userID:    999,
+			limit:     10,
+			offset:    0,
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
+			name:      "user 1 with pagination",
+			userID:    1,
+			limit:     2,
+			offset:    1,
+			wantCount: 2,
+			wantErr:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := repo.FindByUserID(ctx, tt.userID, tt.limit, tt.offset)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, items, tt.wantCount)
+
+				// Проверяем, что все entities принадлежат указанному пользователю
+				for _, item := range items {
+					assert.Equal(t, tt.userID, item.UserId) // Исправлено: UserId вместо UserID
+				}
+
+				// Проверяем порядок (должен быть по created_at DESC)
+				for i := 1; i < len(items); i++ {
+					assert.True(t, items[i-1].CreatedAt.After(items[i].CreatedAt) || 
+						items[i-1].CreatedAt.Equal(items[i].CreatedAt))
+				}
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repository_ConcurrentOperations(t *testing.T) {
+	pool := setupTestDB(t)
+	repo := New{{ .Name }}Repository(pool)
+
+	ctx := context.Background()
+
+	// Тест на конкурентные операции
+	t.Run("concurrent creates", func(t *testing.T) {
+		const goroutines = 5
+		const entitiesPerGoroutine = 10
+
+		errChan := make(chan error, goroutines)
+
+		for i := 0; i < goroutines; i++ {
+			go func(id int) {
+				for j := 0; j < entitiesPerGoroutine; j++ {
+					entity := testutils.CreateTestEntity(&models.{{ .Name }}{}, id*entitiesPerGoroutine+j+1).(*models.{{ .Name }})
+					if err := repo.Create(ctx, entity); err != nil {
+						errChan <- err
+						return
+					}
+				}
+				errChan <- nil
+			}(i)
+		}
+
+		// Ждем завершения всех горутин
+		for i := 0; i < goroutines; i++ {
+			assert.NoError(t, <-errChan)
+		}
+
+		// Проверяем, что все entities созданы
+		count, err := repo.Count(ctx)
+		assert.NoError(t, err)
+		assert.Equal(t, goroutines*entitiesPerGoroutine, count)
+	})
+}
+
+// Дополнительные утилитные функции для тестов
+
+func createTest{{ .Name }}(id int) *models.{{ .Name }} {
+	return testutils.CreateTestEntity(&models.{{ .Name }}{}, id).(*models.{{ .Name }})
+}
+
+func populateTestData(t *testing.T, repo *{{ .Name }}Repository, count int) []*models.{{ .Name }} {
+	t.Helper()
+	
+	ctx := context.Background()
+	var entities []*models.{{ .Name }}
+
+	for i := 1; i <= count; i++ {
+		entity := createTest{{ .Name }}(i)
+		err := repo.Create(ctx, entity)
+		require.NoError(t, err, "Failed to create test entity")
+		entities = append(entities, entity)
+	}
+
+	return entities
+}

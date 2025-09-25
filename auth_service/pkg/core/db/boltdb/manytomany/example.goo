@@ -1,0 +1,68 @@
+// main.go
+package main
+
+import (
+	"log"
+
+	"go.etcd.io/bbolt"
+	"yourmodule/manytomany"
+)
+
+func main() {
+	// Открываем базу данных
+	db, err := bbolt.Open("relations.db", 0600, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	// Создаем репозиторий
+	repo := manytomany.NewRepository(db)
+
+	// Регистрируем отношение пользователей и ментальных карт
+	userMindMapConfig := &manytomany.RelationConfig{
+		Name:        "user_mindmaps",
+		LeftEntity:  "user",
+		RightEntity: "mindmap",
+		LeftIDType:  manytomany.IntID,
+		RightIDType: manytomany.IntID,
+	}
+
+	if err := repo.RegisterRelation(userMindMapConfig); err != nil {
+		log.Fatal(err)
+	}
+
+	// Регистрируем другое отношение (например, теги и статьи)
+	tagArticleConfig := &manytomany.RelationConfig{
+		Name:        "tag_articles",
+		LeftEntity:  "tag",
+		RightEntity: "article",
+		LeftIDType:  manytomany.StringID, // Теги могут иметь строковые ID
+		RightIDType: manytomany.IntID,
+	}
+
+	if err := repo.RegisterRelation(tagArticleConfig); err != nil {
+		log.Fatal(err)
+	}
+
+	// Добавляем отношения
+	repo.AddRelation("user_mindmaps", 1, 100) // user1 → mindmap100
+	repo.AddRelation("user_mindmaps", 1, 101) // user1 → mindmap101
+	repo.AddRelation("user_mindmaps", 2, 100) // user2 → mindmap100
+
+	repo.AddRelation("tag_articles", "golang", 1)  // tag "golang" → article1
+	repo.AddRelation("tag_articles", "golang", 2)  // tag "golang" → article2
+	repo.AddRelation("tag_articles", "python", 1)  // tag "python" → article1
+
+	// Получаем связанные сущности
+	mindmaps, _ := repo.GetRightEntities("user_mindmaps", 1) // [100, 101]
+	users, _ := repo.GetLeftEntities("user_mindmaps", 100)   // [1, 2]
+
+	articles, _ := repo.GetRightEntities("tag_articles", "golang") // [1, 2]
+	tags, _ := repo.GetLeftEntities("tag_articles", 1)             // ["golang", "python"]
+
+	logger.Info("User 1 mindmaps: %v", mindmaps)
+	logger.Info("Mindmap 100 users: %v", users)
+	logger.Info("Golang articles: %v", articles)
+	logger.Info("Article 1 tags: %v", tags)
+}

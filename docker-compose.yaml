@@ -80,17 +80,17 @@ services:
     networks:
       - mindmap-network
 
-  migrate:
-    image: migrate/migrate
-    container_name: mindmap-migrate
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - mindmap-network
-    volumes:
-      - ./api/repository/migrations/:/migrations
-    command: ["-path", "/migrations/", "-database", "postgres://postgres:password@postgres/mindmap_db?sslmode=disable", "up"]
+  # migrate:
+  #   image: migrate/migrate
+  #   container_name: mindmap-migrate
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   networks:
+  #     - mindmap-network
+  #   volumes:
+  #     - ./api/repository/migrations/:/migrations
+  #   command: ["-path", "/migrations/", "-database", "postgres://postgres:password@postgres/mindmap_db?sslmode=disable", "up"]
 
 volumes:
   postgres-data:

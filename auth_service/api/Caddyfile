@@ -1,0 +1,12 @@
+http://localhost {
+	encode gzip
+	handle /api* {
+		reverse_proxy api-backend:8000
+	}
+	handle /auth* {
+		reverse_proxy api-backend:8000
+	}
+	handle {
+		reverse_proxy mindmap-frontend:8080
+	}
+}

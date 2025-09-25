@@ -1,0 +1,219 @@
+package repositorybolt
+
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"time"
+	"context"
+	"strings"
+	"{{ .Module }}/models"
+	"go.etcd.io/bbolt"
+)
+
+type {{ .Name }}Repo struct {
+	db        *bbolt.DB
+	bucketName string
+}
+
+func New{{ .Name }}Repo(db *bbolt.DB) *{{ .Name }}Repo {
+	// Use a simple default bucket name based on the model name
+	bucketName := "{{ .Name | lower }}s"
+	
+	return &{{ .Name }}Repo{
+		db:        db,
+		bucketName: bucketName,
+	}
+}
+
+// InitializeBucket создает bucket если он не существует
+func (r *{{ .Name }}Repo) InitializeBucket() error {
+	return r.db.Update(func(tx *bbolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists([]byte(r.bucketName))
+		return err
+	})
+}
+
+func (r *{{ .Name }}Repo) Create(ctx context.Context, entity *models.{{ .Name }}) error {
+	return r.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		if bucket == nil {
+			return fmt.Errorf("bucket %s not found", r.bucketName)
+		}
+
+		// Генерируем ID если не установлен
+		if entity.ID == 0 {
+			id, err := bucket.NextSequence()
+			if err != nil {
+				return err
+			}
+			entity.ID = int(id)
+		}
+
+		// Устанавливаем временные метки
+		now := time.Now()
+		if entity.CreatedAt.IsZero() {
+			entity.CreatedAt = now
+		}
+		entity.UpdatedAt = now
+
+		// Сериализуем в JSON
+		data, err := json.Marshal(entity)
+		if err != nil {
+			return err
+		}
+
+		// Сохраняем по ID
+		key := []byte(strconv.Itoa(entity.ID))
+		return bucket.Put(key, data)
+	})
+}
+
+func (r *{{ .Name }}Repo) Update{{ .Name }}(ctx context.Context, entity *models.{{ .Name }}) error {
+	return r.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		
+		if bucket == nil {
+			return fmt.Errorf("bucket %s not initialized", r.bucketName)
+		}
+
+		// Получаем текущую запись
+		idBytes := []byte(strconv.Itoa(entity.ID))
+		existingData := bucket.Get(idBytes)
+		if existingData == nil {
+			return fmt.Errorf("%s with id %d not found", strings.ToLower("{{ .Name }}"), entity.ID)
+		}
+
+		var existingEntity models.{{ .Name }}
+		if err := json.Unmarshal(existingData, &existingEntity); err != nil {
+			return fmt.Errorf("unmarshal existing {{ .Name | lower }}: %w", err)
+		}
+
+		// Сохраняем системные поля
+		entity.CreatedAt = existingEntity.CreatedAt
+		entity.UpdatedAt = time.Now()
+
+		// Сохраняем обновленную запись
+		updatedJSON, err := json.Marshal(entity)
+		if err != nil {
+			return fmt.Errorf("marshal {{ .Name | lower }}: %w", err)
+		}
+
+		return bucket.Put(idBytes, updatedJSON)
+	})
+}
+
+func (r *{{ .Name }}Repo) Delete(ctx context.Context, id int) error {
+	return r.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		if bucket == nil {
+			return fmt.Errorf("bucket %s not found", r.bucketName)
+		}
+
+		key := []byte(strconv.Itoa(id))
+		if bucket.Get(key) == nil {
+			return fmt.Errorf("%s with id %d not found", strings.ToLower("{{ .Name }}"), id)
+		}
+
+		return bucket.Delete(key)
+	})
+}
+
+func (r *{{ .Name }}Repo) List(ctx context.Context, limit, offset int) ([]models.{{ .Name }}, error) {
+	var items []models.{{ .Name }}
+
+	err := r.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		if bucket == nil {
+			return fmt.Errorf("bucket %s not found", r.bucketName)
+		}
+
+		count := 0
+		cursor := bucket.Cursor()
+
+		// Пропускаем offset записей
+		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+			if count < offset {
+				count++
+				continue
+			}
+
+			// Останавливаемся при достижении лимита
+			if len(items) >= limit && limit > 0 {
+				break
+			}
+
+			var item models.{{ .Name }}
+			if err := json.Unmarshal(v, &item); err != nil {
+				return err
+			}
+
+			items = append(items, item)
+		}
+
+		return nil
+	})
+
+	return items, err
+}
+
+func (r *{{ .Name }}Repo) Find(ctx context.Context, id int) (*models.{{ .Name }}, error) {
+	var entity *models.{{ .Name }}
+
+	err := r.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		if bucket == nil {
+			return fmt.Errorf("bucket %s not found", r.bucketName)
+		}
+
+		key := []byte(strconv.Itoa(id))
+		data := bucket.Get(key)
+		if data == nil {
+			return fmt.Errorf("%s with id %d not found", strings.ToLower("{{ .Name }}"), id)
+		}
+
+		return json.Unmarshal(data, &entity)
+	})
+
+	return entity, err
+}
+
+func (r *{{ .Name }}Repo) Count(ctx context.Context) (int, error) {
+	var count int
+
+	err := r.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		if bucket == nil {
+			return fmt.Errorf("bucket %s not found", r.bucketName)
+		}
+
+		stats := bucket.Stats()
+		count = stats.KeyN
+		return nil
+	})
+
+	return count, err
+}
+
+// GetAll возвращает все записи (без пагинации)
+func (r *{{ .Name }}Repo) GetAll(ctx context.Context) ([]models.{{ .Name }}, error) {
+	var items []models.{{ .Name }}
+
+	err := r.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(r.bucketName))
+		if bucket == nil {
+			return fmt.Errorf("bucket %s not found", r.bucketName)
+		}
+
+		return bucket.ForEach(func(k, v []byte) error {
+			var item models.{{ .Name }}
+			if err := json.Unmarshal(v, &item); err != nil {
+				return err
+			}
+			items = append(items, item)
+			return nil
+		})
+	})
+
+	return items, err
+}

@@ -28,14 +28,14 @@ async function me() {
   try {
     const response = await axios.get('/auth/user');
     if (response.status === 200) {
-      axios.post(
-        '/api/logs',
-        {
-          title: 'title',
-          content: 'content',
-          user_id: 1
-        },
-      );
+      // axios.post(
+      //   '/api/logs',
+      //   {
+      //     title: 'title',
+      //     content: 'content',
+      //     user_id: 1
+      //   },
+      // );
       axios.get(
         '/api/health',
       );
@@ -84,8 +84,7 @@ async function register(name, email, password) {
   try {
     await axios.post(
       '/auth/register',
-      new URLSearchParams({ name, email, password }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      { name, email, password },
     );
     await me();
     await router.push('/');

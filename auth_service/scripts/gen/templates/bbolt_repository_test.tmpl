@@ -1,0 +1,498 @@
+package repositorybolt
+
+import (
+	"context"
+	"reflect"
+	"testing"
+
+	"{{ .Module }}/models"
+	"{{ .Module }}/pkg/testutils"
+	"go.etcd.io/bbolt"
+)
+
+func SetupTestBBoltDB(t *testing.T) *bbolt.DB {
+	return testutils.SetupTestBBoltDB(t)
+}
+
+// createCustomGenerator создает кастомный генератор с переопределенными полями
+func createCustomGenerator(customFields map[string]interface{}) *testutils.FieldGenerator {
+	generator := testutils.NewFieldGenerator()
+	
+	for field, value := range customFields {
+		field := field // capture range variable
+		value := value // capture range variable
+		generator.CustomGenerators[field] = func(fieldName, dbTag string, id int) interface{} {
+			return value
+		}
+	}
+	
+	return generator
+}
+
+// createTestEntity создает тестовую сущность с заполненными полями
+func createTestEntity(model interface{}, id int) interface{} {
+	return testutils.CreateTestEntity(model, id)
+}
+
+// createTestEntityWithCustomFields создает сущность с возможностью переопределения полей
+func createTestEntityWithCustomFields(model interface{}, id int, customFields map[string]interface{}) interface{} {
+	return testutils.CreateTestEntityWithGenerator(model, id, createCustomGenerator(customFields))
+}
+
+// isZero проверяет, является ли сущность нулевой
+func isZero(entity *models.{{ .Name }}) bool {
+	v := reflect.ValueOf(entity).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		if !reflect.DeepEqual(v.Field(i).Interface(), reflect.Zero(v.Field(i).Type()).Interface()) {
+			return false
+		}
+	}
+	return true
+}
+
+// compareEntities сравнивает две сущности, исключая указанные поля
+func compareEntities(a, b interface{}, excludeFields []string) error {
+	return testutils.CompareEntities(a, b, excludeFields)
+}
+
+func Test{{ .Name }}Repo_Create(t *testing.T) {
+	db := SetupTestBBoltDB(t)
+	repo := New{{ .Name }}Repo(db)
+
+	err := repo.InitializeBucket()
+	if err != nil {
+		t.Fatalf("InitializeBucket failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		entity      *models.{{ .Name }}
+		customFields map[string]interface{}
+		wantErr     bool
+	}{
+		{
+			name:    "successful creation with auto-generated fields",
+			entity:  createTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }}),
+			wantErr: false,
+		},
+		{
+			name:    "creation with existing ID",
+			entity:  createTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }}),
+			wantErr: false,
+		},
+		{
+			name: "creation with custom fields",
+			entity: createTestEntityWithCustomFields(
+				&models.{{ .Name }}{}, 
+				1, 
+				map[string]interface{}{
+					"title":   "Custom Title",
+					"content": "Custom content for testing",
+					"user_id": 42,
+				},
+			).(*models.{{ .Name }}),
+			wantErr: false,
+		},
+		{
+			name: "creation with minimal required fields",
+			entity: &models.{{ .Name }}{
+				// Будут установлены автоматически при создании
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Если entity пустой, создаем с авто-заполнением
+			if isZero(tt.entity) {
+				tt.entity = createTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }})
+			}
+
+			err := repo.Create(ctx, tt.entity)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Create() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if err == nil {
+				if tt.entity.ID == 0 {
+					t.Error("Create() should set ID")
+				}
+
+				retrieved, err := repo.Find(ctx, tt.entity.ID)
+				if err != nil {
+					t.Errorf("Find() after Create failed: %v", err)
+					return
+				}
+
+				if retrieved.ID != tt.entity.ID {
+					t.Errorf("Find() returned ID = %d, want %d", retrieved.ID, tt.entity.ID)
+				}
+
+				// Проверяем корректность сохранения данных
+				if err := compareEntities(retrieved, tt.entity, []string{"CreatedAt", "UpdatedAt"}); err != nil {
+					t.Errorf("Entity fields mismatch: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repo_Find(t *testing.T) {
+	db := SetupTestBBoltDB(t)
+	repo := New{{ .Name }}Repo(db)
+	
+	err := repo.InitializeBucket()
+	if err != nil {
+		t.Fatalf("InitializeBucket failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Создаем тестовые данные с автоматическим заполнением полей
+	testEntity := createTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }})
+	err = repo.Create(ctx, testEntity)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		id      int
+		wantErr bool
+	}{
+		{
+			name:    "existing entity",
+			id:      testEntity.ID,
+			wantErr: false,
+		},
+		{
+			name:    "non-existing entity",
+			id:      999,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entity, err := repo.Find(ctx, tt.id)
+			
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Get() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if entity == nil {
+					t.Error("Get() returned nil entity without error")
+				}
+				if entity.ID != tt.id {
+					t.Errorf("Get() returned ID = %d, want %d", entity.ID, tt.id)
+				}
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repo_Update{{ .Name }}(t *testing.T) {
+	db := SetupTestBBoltDB(t)
+	repo := New{{ .Name }}Repo(db)
+	
+	err := repo.InitializeBucket()
+	if err != nil {
+		t.Fatalf("InitializeBucket failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Создаем оригинальную сущность
+	originalEntity := createTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }})
+	err = repo.Create(ctx, originalEntity)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	// Создаем обновленную версию с измененными полями
+	updatedEntity := createTestEntityWithCustomFields(
+		&models.{{ .Name }}{}, 
+		1,
+		map[string]interface{}{
+			"title":   "Updated Title",
+			"content": "Updated content for testing",
+		},
+	).(*models.{{ .Name }})
+
+	tests := []struct {
+		name    string
+		entity  *models.{{ .Name }}
+		wantErr bool
+	}{
+		{
+			name:    "successful update",
+			entity:  updatedEntity,
+			wantErr: false,
+		},
+		{
+			name: "update non-existing entity",
+			entity: &models.{{ .Name }}{
+				ID: 999,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := repo.Update{{ .Name }}(ctx, tt.entity)
+			
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Update{{ .Name }}() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				// Проверяем, что обновление сохранилось
+				updated, err := repo.Find(ctx, tt.entity.ID)
+				if err != nil {
+					t.Errorf("Get() after update failed: %v", err)
+					return
+				}
+
+				// Проверяем, что CreatedAt не изменился
+				if !updated.CreatedAt.Equal(originalEntity.CreatedAt) {
+					t.Error("Update{{ .Name }}() should not change CreatedAt")
+				}
+
+				// Проверяем, что UpdatedAt обновился
+				if updated.UpdatedAt.Before(originalEntity.UpdatedAt) {
+					t.Error("Update{{ .Name }}() should update UpdatedAt")
+				}
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repo_Delete(t *testing.T) {
+	db := SetupTestBBoltDB(t)
+	repo := New{{ .Name }}Repo(db)
+	
+	err := repo.InitializeBucket()
+	if err != nil {
+		t.Fatalf("InitializeBucket failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Создаем тестовые данные
+	testEntity := createTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }})
+	err = repo.Create(ctx, testEntity)
+	if err != nil {
+		t.Fatalf("Setup: Create failed: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		id      int
+		wantErr bool
+	}{
+		{
+			name:    "delete existing entity",
+			id:      testEntity.ID,
+			wantErr: false,
+		},
+		{
+			name:    "delete non-existing entity",
+			id:      999,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := repo.Delete(ctx, tt.id)
+			
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Delete() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				// Проверяем, что entity действительно удален
+				_, err := repo.Find(ctx, tt.id)
+				if err == nil {
+					t.Error("Delete() should remove entity")
+				}
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repo_List(t *testing.T) {
+	db := SetupTestBBoltDB(t)
+	repo := New{{ .Name }}Repo(db)
+	
+	err := repo.InitializeBucket()
+	if err != nil {
+		t.Fatalf("InitializeBucket failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Создаем несколько тестовых entities
+	for i := 1; i <= 5; i++ {
+		entity := createTestEntity(&models.{{ .Name }}{}, i).(*models.{{ .Name }})
+		err := repo.Create(ctx, entity)
+		if err != nil {
+			t.Fatalf("Setup: Create failed: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		limit        int
+		offset       int
+		wantCount    int
+	}{
+		{
+			name:      "limit 2, offset 0",
+			limit:     2,
+			offset:    0,
+			wantCount: 2,
+		},
+		{
+			name:      "limit 3, offset 1",
+			limit:     3,
+			offset:    1,
+			wantCount: 3,
+		},
+		{
+			name:      "limit 10, offset 0 (more than exists)",
+			limit:     10,
+			offset:    0,
+			wantCount: 5,
+		},
+		{
+			name:      "limit 2, offset 4 (out of range)",
+			limit:     2,
+			offset:    4,
+			wantCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items, err := repo.List(ctx, tt.limit, tt.offset)
+			if err != nil {
+				t.Errorf("List() error = %v", err)
+				return
+			}
+
+			if len(items) != tt.wantCount {
+				t.Errorf("List() returned %d items, want %d", len(items), tt.wantCount)
+			}
+		})
+	}
+}
+
+func Test{{ .Name }}Repo_GetAll(t *testing.T) {
+	db := SetupTestBBoltDB(t)
+	repo := New{{ .Name }}Repo(db)
+	
+	err := repo.InitializeBucket()
+	if err != nil {
+		t.Fatalf("InitializeBucket failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Создаем несколько тестовых entities
+	expectedCount := 3
+	for i := 0; i < expectedCount; i++ {
+		entity := createTestEntity(&models.{{ .Name }}{}, i+1).(*models.{{ .Name }})
+		err := repo.Create(ctx, entity)
+		if err != nil {
+			t.Fatalf("Setup: Create failed: %v", err)
+		}
+	}
+
+	items, err := repo.GetAll(ctx)
+	if err != nil {
+		t.Errorf("GetAll() error = %v", err)
+		return
+	}
+
+	if len(items) != expectedCount {
+		t.Errorf("GetAll() returned %d items, want %d", len(items), expectedCount)
+	}
+}
+
+func Test{{ .Name }}Repo_Count(t *testing.T) {
+	db := SetupTestBBoltDB(t)
+	repo := New{{ .Name }}Repo(db)
+	
+	err := repo.InitializeBucket()
+	if err != nil {
+		t.Fatalf("InitializeBucket failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Начальный count должен быть 0
+	count, err := repo.Count(ctx)
+	if err != nil {
+		t.Errorf("Count() error = %v", err)
+		return
+	}
+
+	if count != 0 {
+		t.Errorf("Initial Count() = %d, want 0", count)
+	}
+
+	// Создаем несколько entities и проверяем count
+	expectedCount := 3
+	for i := 0; i < expectedCount; i++ {
+		entity := createTestEntity(&models.{{ .Name }}{}, i+1).(*models.{{ .Name }})
+		err := repo.Create(ctx, entity)
+		if err != nil {
+			t.Fatalf("Setup: Create failed: %v", err)
+		}
+	}
+
+	count, err = repo.Count(ctx)
+	if err != nil {
+		t.Errorf("Count() after creation error = %v", err)
+		return
+	}
+
+	if count != expectedCount {
+		t.Errorf("Count() after creation = %d, want %d", count, expectedCount)
+	}
+}
+
+func Test{{ .Name }}Repo_InitializeBucket(t *testing.T) {
+	db := SetupTestBBoltDB(t)
+	repo := New{{ .Name }}Repo(db)
+
+	// Первая инициализация должна пройти успешно
+	err := repo.InitializeBucket()
+	if err != nil {
+		t.Errorf("InitializeBucket() first call error = %v", err)
+	}
+
+	// Повторная инициализация тоже должна работать
+	err = repo.InitializeBucket()
+	if err != nil {
+		t.Errorf("InitializeBucket() second call error = %v", err)
+	}
+
+	// Проверяем, что bucket действительно создан и работает
+	ctx := context.Background()
+	testEntity := createTestEntity(&models.{{ .Name }}{}, 1).(*models.{{ .Name }})
+	err = repo.Create(ctx, testEntity)
+	if err != nil {
+		t.Errorf("Create() after InitializeBucket failed: %v", err)
+	}
+}
