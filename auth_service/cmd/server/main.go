@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 	"log/slog"
 	"net/http"
 	"os"
@@ -55,6 +56,12 @@ func loadConfig() (*Config, error) {
 }
 
 func main() {
+	 // Установка часового пояса Екатеринбур
+    loc, err := time.LoadLocation("Asia/Yekaterinburg")
+    if err != nil {
+        log.Fatal("Не удалось загрузить часовой пояс:", err)
+    }
+    time.Local = loc
 	// Загружаем конфиг
 	conf, err := loadConfig()
 	if err != nil {

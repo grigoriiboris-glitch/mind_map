@@ -1,6 +1,0 @@
-# dependencies
-bin
-tmp
-*.env
-auth.db
-storage/logs

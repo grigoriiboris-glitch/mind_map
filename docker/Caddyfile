@@ -1,0 +1,29 @@
+http://localhost {
+    encode gzip
+
+    # Публичные пути авторизации
+    @public-auth path /api/auth*
+    handle @public-auth {
+        reverse_proxy auth_service:8000
+    }
+
+    # Все защищённые API
+    handle /api* {
+        forward_auth auth_service:8000 {
+            uri /auth/user
+            copy_headers X-User-Id X-User-Name X-User-Role
+        }
+
+        # Проксируем **оригинальный путь** запроса в backend
+        reverse_proxy api-backend:8000 {
+            header_up X-User-Id {http.request.header.X-User-Id}
+            header_up X-User-Name {http.request.header.X-User-Name}
+            header_up X-User-Role {http.request.header.X-User-Role}
+        }
+    }
+
+    # Frontend
+    handle {
+        reverse_proxy mindmap-frontend:8080
+    }
+}

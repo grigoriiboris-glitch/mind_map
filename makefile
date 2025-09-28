@@ -3,11 +3,17 @@ up:
 
 b:
 	docker-compose build
+
+n:
+	docker-compose up nginx
 d:
 	docker-compose down
 
 app:
 	docker-compose up api-backend
+
+au:
+	docker-compose up auth_service
 appb:
 	docker-compose up --build api-backend
 f:

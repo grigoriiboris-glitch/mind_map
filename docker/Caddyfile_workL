@@ -1,0 +1,55 @@
+http://localhost {
+    encode gzip
+
+    # Публичные пути авторизации
+    @public-auth path /api/auth*
+    handle @public-auth {
+        reverse_proxy auth_service:8000
+    }
+
+    # Все защищённые API (включая /api/health)
+    handle /api* {
+    route {
+        @noAuth not header_regexp authCookie Cookie auth_token=.+ 
+        respond @noAuth "Authorization required" 401
+
+        reverse_proxy auth_service:8000 {
+            header_up Authorization {http.request.header.Cookie}
+
+            @authOK status 200
+            handle_response @authOK {
+                vars {
+                    user_id   {http.response.header.X-User-Id}
+                    user_name {http.response.header.X-User-Name}
+                    user_role {http.response.header.X-User-Role}
+                }
+
+                # Теперь подставляем в backend
+                reverse_proxy api-backend:8000 {
+                    header_up X-User-Id {vars.user_id}
+                    header_up X-User-Name {vars.user_name}
+                    header_up X-User-Role {vars.user_role}
+
+                    # Наружу клиенту можете отдавать или нет
+                    header_down X-User-Id {vars.user_id}
+                    header_down X-User-Name {vars.user_name}
+                    header_down X-User-Role {vars.user_role}
+                }
+            }
+
+            @authFail status 400 401 403
+            handle_response @authFail {
+                respond "Unauthorized" 401
+            }
+        }
+    }
+}
+
+
+    # Frontend
+    handle {
+        reverse_proxy mindmap-frontend:8080 {
+            # теперь не режем X-User-Role
+        }
+    }
+}

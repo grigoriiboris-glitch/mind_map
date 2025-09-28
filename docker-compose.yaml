@@ -11,8 +11,8 @@ services:
     environment:
       - NODE_ENV=development
     volumes:
-      - ./:/app
-      - ./node_modules/app/node_modules
+      - ./front:/app
+      - ./front/node_modules/app/node_modules
     working_dir: /app
     stdin_open: true
     tty: true
@@ -21,6 +21,29 @@ services:
     networks:
       - mindmap-network
     command: sh -c "npm i && npx vue-cli-service serve --port 8080 --host 0.0.0.0"
+
+  auth_service:
+    build:
+      context: ./auth_service
+      target: development
+    container_name: auth_service
+    #command: sh -c "go mod tidy && go build -o main . && ./main"
+    command: air
+    environment:
+      PORT: 8001
+      LOG_LEVEL: info
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: mindmap_db
+      POSTGRES_PASSWORD: password
+      POSTGRES_USER: postgres
+      APP_PACKAGE_NAME: github.com/auth_service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mindmap-network
+    volumes:
+      - ./auth_service:/app
 
   api-backend:
     build:
@@ -45,18 +68,32 @@ services:
     volumes:
       - ./api:/app
 
-  caddy:
-    image: caddy
-    container_name: mindmap-caddy
+  # caddy:
+  #   image: caddy
+  #   container_name: mindmap-caddy
+  #   depends_on:
+  #     - api-backend
+  #     - mindmap-frontend
+  #   ports:
+  #     - 80:80
+  #   volumes:
+  #     - caddy-config:/config
+  #     - caddy-data:/data
+  #     - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+  #   networks:
+  #     - mindmap-network
+
+  nginx:
+    image: nginx:stable
+    container_name: nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
+      - auth_service
       - api-backend
       - mindmap-frontend
-    ports:
-      - 80:80
-    volumes:
-      - caddy-config:/config
-      - caddy-data:/data
-      - ./api/Caddyfile:/etc/caddy/Caddyfile:ro
     networks:
       - mindmap-network
 
@@ -79,18 +116,6 @@ services:
       - postgres-data:/var/lib/postgresql/data
     networks:
       - mindmap-network
-
-  # migrate:
-  #   image: migrate/migrate
-  #   container_name: mindmap-migrate
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   networks:
-  #     - mindmap-network
-  #   volumes:
-  #     - ./api/repository/migrations/:/migrations
-  #   command: ["-path", "/migrations/", "-database", "postgres://postgres:password@postgres/mindmap_db?sslmode=disable", "up"]
 
 volumes:
   postgres-data:

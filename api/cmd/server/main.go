@@ -8,14 +8,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-
-    "go.etcd.io/bbolt"
 	"github.com/joho/godotenv"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	 middle "github.com/mymindmap/api/internal/http/middleware"
-	"github.com/mymindmap/api/internal/auth"
 	"github.com/mymindmap/api/internal/http/routes"
     "github.com/mymindmap/api/pkg/core/validator"
 )
@@ -71,13 +68,6 @@ func main() {
 		}
 	}
 
-	// Открываем БД BoltDB
-	dbbolt, err := bbolt.Open("auth.db", 0600, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer dbbolt.Close()
-
 	// Подключение к БД
 	ctx := context.Background()
 	dbpool, err := pgxpool.New(ctx, conf.PostgresURL)
@@ -87,17 +77,9 @@ func main() {
 	}
 	defer dbpool.Close()
 
-	// Конфигурация аутентификации
-	authConfig, err := auth.NewConfigFromEnv(slog.Default())
-	if err != nil {
-		log.Fatalf("auth config error: %v", err)
-	}
-	if conf.JWTSecret != "" {
-		authConfig.JWTSecret = []byte(conf.JWTSecret)
-	}
 
     // Роутер через DI
-    mainRouter, err := routes.NewRouter(ctx, dbpool, dbbolt, authConfig)
+    mainRouter, err := routes.NewRouter(ctx, dbpool)
     if err != nil {
         log.Fatalf("router error: %v", err)
     }

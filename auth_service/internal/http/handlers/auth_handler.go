@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"log/slog"
+	"encoding/base64"
+    "encoding/json"
 	"github.com/mymindmap/api/internal/auth"
 	"github.com/mymindmap/api/internal/http/requests/userreq"
 	"github.com/mymindmap/api/internal/http/middleware"
@@ -54,6 +56,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Secure:   false, // Установите true для HTTPS
 		MaxAge:   int(config.RefreshTokenExp.Seconds()),
 	})
+
+
 }
 
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
@@ -173,6 +177,11 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		resp.RespondError(w, http.StatusInternalServerError, "GetCurrentUser failed to get  user")
 		return
 	}
+	user.Name = "Katy"
+	w.Header().Set("X-User-Role", "user")
+    jsonBytes, _ := json.Marshal(user)
+    encoded := base64.StdEncoding.EncodeToString(jsonBytes)
 
+    w.Header().Set("X-User-Body", encoded)
 	resp.RespondJSON(w, http.StatusOK, user)
 }

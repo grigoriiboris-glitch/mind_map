@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
     "io"
+	"log/slog"
 	"bytes"
-	"github.com/mymindmap/api/internal/auth"
+	"encoding/base64"
+	"github.com/mymindmap/api/models"
 )
 
 type contextKey string
@@ -17,48 +19,31 @@ const (
 	UserContextKey contextKey = "user"
 )
 
-// AuthMiddleware проверяет JWT токен и добавляет пользователя в контекст
-func AuthMiddleware(authService *auth.AuthService, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+// вытаскивает данные из заголовков
+func AuthHeadersMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+claims := r.Header.Get("X-User-Body")
+var cl models.User
 
-		 if authService == nil {
-            http.Error(w, "Authentication service unavailable", http.StatusInternalServerError)
-            return
-        }
-		// Получаем токен из заголовка Authorization
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			// Пробуем получить токен из cookie
-			cookie, err := r.Cookie("auth_token")
-			if err != nil || cookie.Value == "" {
-				// Если нет токена, продолжаем без авторизации
-				next.ServeHTTP(w, r)
-				return
-			}
-			authHeader = "Bearer " + cookie.Value
-		}
+// Декодируем base64
+decoded, err := base64.StdEncoding.DecodeString(claims)
+if err != nil {
+    http.Error(w, "invalid User response", http.StatusBadRequest)
+    return
+}
+slog.Info("Decoded user data:", string(decoded))
 
-		// Проверяем формат заголовка
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			next.ServeHTTP(w, r)
-			return
-		}
+// Распаковываем JSON
+err = json.Unmarshal(decoded, &cl)
+if err != nil {
+    http.Error(w, "invalid user data", http.StatusBadRequest)
+    return
+}
 
-		// Извлекаем токен
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-
-		// Валидируем токен
-		claims, err := authService.ValidateToken(tokenString)
-		if err != nil {
-			// Если токен невалиден, продолжаем без авторизации
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Добавляем пользователя в контекст
-		ctx := context.WithValue(r.Context(), UserContextKey, claims)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	}
+        // Добавляем пользователя в контекст
+        ctx := context.WithValue(r.Context(), UserContextKey, cl)
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
 }
 
 func JSONContentType(next http.Handler) http.Handler {
@@ -133,45 +118,9 @@ func DecodeJSONBody(r *http.Request, v interface{}) error {
     return json.Unmarshal(bodyBytes, v)
 }
 
-// RequireAuth middleware требует авторизации для доступа
-func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		claims := r.Context().Value(UserContextKey)
-		if claims == nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	}
-}
-
-// RequirePermission middleware проверяет права доступа
-func RequirePermission(authService *auth.AuthService, object, action string) func(http.HandlerFunc) http.HandlerFunc {
-	return func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			claims := r.Context().Value(UserContextKey)
-			if claims == nil {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-
-			userClaims := claims.(*auth.Claims)
-			
-			// Проверяем права доступа по роли пользователя
-			if !authService.CheckPermission(userClaims.Role, object, action) {
-				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		}
-	}
-}
-
 // GetAuthUser извлекает пользователя из контекста
-func GetAuthUser(ctx context.Context) *auth.Claims {
-	if user, ok := ctx.Value(UserContextKey).(*auth.Claims); ok {
+func GetAuthUser(ctx context.Context) *models.User {
+	if user, ok := ctx.Value(UserContextKey).(*models.User); ok {
 		return user
 	}
 	return nil
